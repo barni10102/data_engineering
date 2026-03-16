@@ -1,0 +1,9 @@
+minio-data/
+grafana-data/
+redis-data/
+.venv
+__pycache__
+*.pyc
+.git
+.idea
+.vscode
