@@ -1,7 +1,7 @@
 name: data-engineering
 services:
   postgres:
-    image: postgres:latest
+    image: postgres:17.4
     container_name: postgres-data-engineering
     restart: unless-stopped
     environment:
@@ -15,7 +15,7 @@ services:
       - ./postgres-init:/docker-entrypoint-initdb.d
 
   redis:
-    image: redis:latest
+    image: redis:7.4.3
     container_name: redis-data-engineering
     restart: unless-stopped
     ports:
@@ -28,7 +28,7 @@ services:
     command: [ "redis-server", "/usr/local/etc/redis/redis.conf", "--requirepass", "${REDIS_PASSWORD}" ]
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: minio-data-engineering
     restart: unless-stopped
     environment:
@@ -42,8 +42,9 @@ services:
       - ./minio-data:/data
 
   mc:
-    image: minio/mc:latest
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
     container_name: minio-mc-data-engineering
+    user: root
     depends_on:
       - minio
     entrypoint: >
@@ -51,12 +52,14 @@ services:
         until mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}; do
           sleep 2;
         done &&
-        mc mb --ignore-existing myminio/raw >/dev/null 2>&1 &&
-        mc anonymous set public myminio/raw >/dev/null 2>&1
+        mc mb --ignore-existing myminio/raw &&
+        mc mb --ignore-existing myminio/dwh &&
+        mc anonymous set public myminio/raw &&
+        mc anonymous set public myminio/dwh
       "
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:12.4
     container_name: grafana-data-engineering
     restart: unless-stopped
     environment:
@@ -87,6 +90,28 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     ports:
       - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+
+  scheduler:
+    build:
+      context: ../GrafanaApi
+    container_name: prefect-scheduler-data-engineering
+    restart: unless-stopped
+    command: python -m app.etl.scheduler
+    environment:
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_RAW_BUCKET: ${MINIO_RAW_BUCKET}
+      MINIO_DWH_BUCKET: ${MINIO_DWH_BUCKET}
+      KAGGLE_API_TOKEN: ${KAGGLE_API_TOKEN}
     depends_on:
       - postgres
       - redis

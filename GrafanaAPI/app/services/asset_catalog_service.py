@@ -2,7 +2,7 @@ from typing import  Any
 
 from fastapi import HTTPException
 
-from app.db.postgres import get_connection
+from app.db.postgres import get_postgres_connection
 
 
 
@@ -17,7 +17,7 @@ def get_assets_by_type(asset_type: str) -> list[dict[str, Any]] | None:
         ORDER BY symbol;
     """
 
-    conn = get_connection()
+    conn = get_postgres_connection()
     try:
         with conn:
             with conn.cursor() as cur:
@@ -42,7 +42,7 @@ def get_all_assets() -> list[dict[str, Any]] | None:
         ORDER BY asset_type, symbol;
     """
 
-    conn = get_connection()
+    conn = get_postgres_connection()
     try:
         with conn:
             with conn.cursor() as cur:

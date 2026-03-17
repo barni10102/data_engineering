@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional, Tuple
 
 from fastapi import HTTPException
 
-from app.db.postgres import get_connection
+from app.db.postgres import get_postgres_connection
 
 
 def _default_from_to(
@@ -47,7 +47,7 @@ def get_asset_price_series(
         ORDER BY f.snapshot_ts ASC;
     """
 
-    conn = get_connection()
+    conn = get_postgres_connection()
     try:
         with conn:
             with conn.cursor() as cursor:
@@ -69,7 +69,7 @@ def get_asset_price_series(
                   AND ad.symbol = %s;
             """
 
-        conn = get_connection()
+        conn = get_postgres_connection()
         try:
             with conn:
                 with conn.cursor() as cur:
@@ -86,7 +86,7 @@ def get_asset_price_series(
         new_to = last_ts
         new_from = last_ts - window
 
-        conn = get_connection()
+        conn = get_postgres_connection()
         try:
             with conn:
                 with conn.cursor() as cursor:
@@ -151,7 +151,7 @@ def get_assets_indexed_series(
             ORDER BY ad.asset_type, ad.symbol, f.snapshot_ts ASC;
         """
 
-    conn = get_connection()
+    conn = get_postgres_connection()
     try:
         with conn:
             with conn.cursor() as cursor:

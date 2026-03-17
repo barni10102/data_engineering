@@ -1,7 +1,9 @@
 minio-data/
 grafana-data/
 redis-data/
-.venv
+.venv/
+venv/
+.env
 __pycache__
 *.pyc
 .git
