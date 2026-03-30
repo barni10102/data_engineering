@@ -49,79 +49,106 @@ def get_asset_price_series(
 
     conn = get_postgres_connection()
     try:
-        with conn:
-            with conn.cursor() as cursor:
+        with conn.cursor() as cursor:
                 cursor.execute(base_sql, (asset_type, symbol, date_from, date_to))
                 rows = cursor.fetchall()
+            
+        if not rows:
+            if asset_type == "crypto":
+                raise HTTPException(status_code=404, detail="No data for given symbol / time range")
+
+            sql_last = """
+                    SELECT max(f.snapshot_ts) AS last_ts
+                    FROM dwh.asset_dim ad
+                    JOIN dwh.intraday_price_fact f ON f.asset_id = ad.asset_id
+                    WHERE ad.asset_type = 'stock'
+                      AND ad.symbol = %s;
+                """
+
+            with conn.cursor() as cur:
+                cur.execute(sql_last, (symbol,))
+                last_row = cur.fetchone()
+
+            last_ts = last_row["last_ts"] if last_row else None
+            if last_ts is None:
+                raise HTTPException(status_code=404, detail="No data at all for this symbol")
+
+            window = date_to - date_from
+            new_to = last_ts
+            new_from = last_ts - window
+
+            with conn.cursor() as cursor:
+                cursor.execute(base_sql, (asset_type, symbol, new_from, new_to))
+                rows = cursor.fetchall()
+
+            if not rows:
+                raise HTTPException(status_code=404, detail="No data for given symbol / time range")
+
+
+        first = rows[0]
+        asset_type = first["asset_type"]
+        sym = first["symbol"]
+        name = first.get("name")
+
+        points: List[Dict[str, Any]] = []
+        for row in rows:
+            points.append(
+                {
+                    "snapshot_ts": row["snapshot_ts"],
+                    "close_price": float(row["close_price"]) if row["close_price"] is not None else None,
+                    "volume": float(row["volume"]) if row["volume"] is not None else None,
+                    "volume_usd": float(row["volume_usd"]) if row["volume_usd"] is not None else None,
+                }
+            )
+
+        return {
+            "asset_type": asset_type,
+            "symbol": sym,
+            "name": name,
+            "points": points,
+        }
     finally:
         conn.close()
 
 
-    if not rows:
-        if asset_type == "crypto":
-            raise HTTPException(status_code=404, detail="No data for given symbol / time range")
-
-        sql_last = """
-                SELECT max(f.snapshot_ts) AS last_ts
-                FROM dwh.asset_dim ad
-                JOIN dwh.intraday_price_fact f ON f.asset_id = ad.asset_id
-                WHERE ad.asset_type = 'stock'
-                  AND ad.symbol = %s;
-            """
-
-        conn = get_postgres_connection()
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    cur.execute(sql_last, (symbol,))
-                    last_row = cur.fetchone()
-        finally:
-            conn.close()
-
-        last_ts = last_row["last_ts"] if last_row else None
-        if last_ts is None:
-            raise HTTPException(status_code=404, detail="No data at all for this symbol")
-
-        window = date_to - date_from
-        new_to = last_ts
-        new_from = last_ts - window
-
-        conn = get_postgres_connection()
-        try:
-            with conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(base_sql, (asset_type, symbol, new_from, new_to))
-                    rows = cursor.fetchall()
-        finally:
-            conn.close()
+def _fetch_index_rows(
+    conn,
+    symbols: List[str],
+    date_from: datetime,
+    date_to: datetime,
+) -> List[Dict[str, Any]]:
+    sql = """
+        SELECT
+            ad.asset_type,
+            ad.symbol,
+            ad.name,
+            f.snapshot_ts,
+            f.close_price
+        FROM dwh.asset_dim ad
+        JOIN dwh.intraday_price_fact f
+          ON f.asset_id = ad.asset_id
+        WHERE ad.symbol = ANY(%s)
+          AND f.snapshot_ts BETWEEN %s AND %s
+        ORDER BY ad.asset_type, ad.symbol, f.snapshot_ts ASC;
+    """
+    with conn.cursor() as cursor:
+        cursor.execute(sql, (symbols, date_from, date_to))
+        return cursor.fetchall()
 
 
-        if not rows:
-            raise HTTPException(status_code=404, detail="No data for given symbol / time range")
+def _last_stock_ts_for_symbols(conn, symbols: List[str]) -> Optional[datetime]:
+    sql = """
+        SELECT MAX(f.snapshot_ts) AS last_ts
+        FROM dwh.asset_dim ad
+        JOIN dwh.intraday_price_fact f ON f.asset_id = ad.asset_id
+        WHERE ad.asset_type = 'stock'
+          AND ad.symbol = ANY(%s);
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, (symbols,))
+        row = cur.fetchone()
+    return row["last_ts"] if row else None
 
-
-    first = rows[0]
-    asset_type = first["asset_type"]
-    sym = first["symbol"]
-    name = first.get("name")
-
-    points: List[Dict[str, Any]] = []
-    for row in rows:
-        points.append(
-            {
-                "snapshot_ts": row["snapshot_ts"],
-                "close_price": float(row["close_price"]) if row["close_price"] is not None else None,
-                "volume": float(row["volume"]) if row["volume"] is not None else None,
-                "volume_usd": float(row["volume_usd"]) if row["volume_usd"] is not None else None,
-            }
-        )
-
-    return {
-        "asset_type": asset_type,
-        "symbol": sym,
-        "name": name,
-        "points": points,
-    }
 
 def get_assets_indexed_series(
     symbols: list[str],
@@ -129,77 +156,66 @@ def get_assets_indexed_series(
     date_to: Optional[datetime],
 ) -> dict[str, list[dict[str, Any]]] | None:
 
-    symbols_clean = [s.strip() for s in symbols if s.strip()]
+    symbols_clean = [s.strip().upper() for s in symbols if s.strip()]
 
     if not symbols_clean:
         raise HTTPException(status_code=400, detail="No symbols provided")
 
     date_from, date_to = _default_from_to(date_from, date_to)
 
-    sql = """
-            SELECT
-                ad.asset_type,
-                ad.symbol,
-                ad.name,
-                f.snapshot_ts,
-                f.close_price
-            FROM dwh.asset_dim ad
-            JOIN dwh.intraday_price_fact f
-              ON f.asset_id = ad.asset_id
-            WHERE ad.symbol = ANY(%s)
-              AND f.snapshot_ts BETWEEN %s AND %s
-            ORDER BY ad.asset_type, ad.symbol, f.snapshot_ts ASC;
-        """
-
     conn = get_postgres_connection()
     try:
-        with conn:
-            with conn.cursor() as cursor:
-                cursor.execute(sql, (symbols_clean, date_from, date_to))
-                rows = cursor.fetchall()
+        rows = _fetch_index_rows(conn, symbols_clean, date_from, date_to)
+    
+        if not rows:
+            last_ts = _last_stock_ts_for_symbols(conn, symbols_clean)
+            if last_ts is not None:
+                window = date_to - date_from
+                new_to = last_ts
+                new_from = last_ts - window
+                rows = _fetch_index_rows(conn, symbols_clean, new_from, new_to)
+        
+        if not rows:
+            return {"series": []}
+
+        grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+        for row in rows:
+            key = (row["asset_type"], row["symbol"])
+            grouped.setdefault(key, []).append(row)
+
+        flat_series: List[Dict[str, Any]] = []
+
+        for (asset_type, sym), sym_rows in grouped.items():
+            base_price: Optional[float] = None
+            for r in sym_rows:
+                cp = r["close_price"]
+                if cp is not None:
+                    base_price = float(cp)
+                    break
+
+            if base_price is None or base_price == 0:
+                continue
+
+            for r in sym_rows:
+                cp = r["close_price"]
+                if cp is None:
+                    continue
+                cp_float = float(cp)
+                normalized = (cp_float / base_price) * 100.0
+
+                flat_series.append(
+                    {
+                        "asset_type": asset_type,
+                        "symbol": sym,
+                        "name": r.get("name"),
+                        "snapshot_ts": r["snapshot_ts"],
+                        "value": normalized,
+                    }
+                )
+
+        if not flat_series:
+            return {"series": []}
+
+        return {"series": flat_series}
     finally:
         conn.close()
-
-    if not rows:
-        raise HTTPException(status_code=404, detail="No data for given symbols / time range")
-
-    grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
-    for row in rows:
-        key = (row["asset_type"], row["symbol"])
-        grouped.setdefault(key, []).append(row)
-
-    flat_series: List[Dict[str, Any]] = []
-
-    for (asset_type, sym), sym_rows in grouped.items():
-        base_price: Optional[float] = None
-        for r in sym_rows:
-            cp = r["close_price"]
-            if cp is not None:
-                base_price = float(cp)
-                break
-
-        if base_price is None or base_price == 0:
-            continue
-
-        for r in sym_rows:
-            cp = r["close_price"]
-            if cp is None:
-                continue
-            cp_float = float(cp)
-            normalized = (cp_float / base_price) * 100.0
-
-            flat_series.append(
-                {
-                    "asset_type": asset_type,
-                    "symbol": sym,
-                    "name": r.get("name"),
-                    "snapshot_ts": r["snapshot_ts"],
-                    "value": normalized,
-                }
-            )
-
-    if not flat_series:
-        raise HTTPException(status_code=404, detail="No valid data for given symbols")
-
-
-    return {"series": flat_series}

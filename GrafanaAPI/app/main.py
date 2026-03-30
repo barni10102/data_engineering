@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import assets
 from app.routers import top_movers
+from app.routers import analytics
 
 
 def create_app() -> FastAPI:
@@ -21,6 +22,7 @@ def create_app() -> FastAPI:
 
     fastapp.include_router(assets.router)
     fastapp.include_router(top_movers.router)
+    fastapp.include_router(analytics.router)
 
     return fastapp
 

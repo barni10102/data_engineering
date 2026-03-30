@@ -53,7 +53,7 @@ def upload_kaggle_to_minio(local_path: str):
     logger.info(f"Saved sp500 companies data to MinIO: {path}")
     return path
 
-@flow(name="Daily Kaggle S&P 500 Update")
+@flow(name="Daily Kaggle SP 500 Update")
 def daily_sp500_companies_update_flow():
     local_csv = download_sp500_companies_from_kaggle()
     path = upload_kaggle_to_minio(local_csv)

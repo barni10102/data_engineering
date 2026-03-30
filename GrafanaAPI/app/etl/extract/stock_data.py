@@ -1,3 +1,4 @@
+import random
 import time
 import json
 import io
@@ -7,10 +8,39 @@ import yfinance as yf
 from datetime import datetime
 
 from app.db.postgres import get_postgres_connection
+from app.db.redis_client import redis_client
 
 from prefect import task, get_run_logger, flow
 from app.db.minio_client import get_minio_client
 from app.core import config
+
+INFO_CACHE_TTL_SECONDS = 6 * 60 * 60
+
+
+def _info_cache_key(symbol: str) -> str:
+    return f"stock:info:{symbol}"
+
+
+def _load_info_from_cache(symbol: str) -> dict[str, Any] | None:
+    try:
+        cached = redis_client.get(_info_cache_key(symbol))
+        if not cached:
+            return None
+        data = json.loads(cached)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+    
+
+def _save_info_to_cache(symbol: str, info: dict[str, Any]) -> None:
+    try:
+        redis_client.set(
+            _info_cache_key(symbol),
+            json.dumps(info, default=str),
+            ex=INFO_CACHE_TTL_SECONDS,
+        )
+    except Exception:
+        pass
 
 
 def fetch_ticker_info_with_retry(symbol: str, max_retries: int = 10, base_delay: float = 0.5) -> None | dict | dict[
@@ -19,13 +49,13 @@ def fetch_ticker_info_with_retry(symbol: str, max_retries: int = 10, base_delay:
     for attempt in range(1, max_retries + 1):
         try:
             info = yf.Ticker(symbol).info
-            if info:
+            if isinstance(info, dict) and info:
                 return info
-            else:
-                raise ValueError("Empty info dict returned from yfinance")
+            raise ValueError("Empty info dict returned from yfinance")
         except Exception as e:
             if attempt < max_retries:
-                time.sleep(base_delay * attempt)
+                sleep_s = base_delay * attempt + random.uniform(0.1, 0.4)
+                time.sleep(sleep_s)
             else:
                 logger.warning(f"Failed to fetch info for {symbol} after {max_retries} attempts. Error: {e}")
                 return {}
@@ -76,14 +106,18 @@ def fetch_stock_ohlcv(stocks: list[dict]) -> list[dict]:
     name_by_symbol = {s["symbol"]: s["name"] for s in stocks}
     logger.info(f"Downloading yfinance data for {len(tickers)} tickers...")
 
-    df = yf.download(
-        tickers=tickers,
-        period="1d",
-        interval="5m",
-        group_by="ticker",
-        auto_adjust=False,
-        progress=False,
-    )
+    try:
+        df = yf.download(
+            tickers=tickers,
+            period="1d",
+            interval="5m",
+            group_by="ticker",
+            auto_adjust=False,
+            progress=False,
+            threads=False,
+        )
+    except Exception as e:
+        raise RuntimeError(f"yfinance download failed: {e}")
 
     result = []
 
@@ -91,7 +125,7 @@ def fetch_stock_ohlcv(stocks: list[dict]) -> list[dict]:
         available_symbols = tickers
         df = {tickers[0]: df}
     else:
-        available_symbols = list(df.columns.levels[0])
+        available_symbols = list(df.columns.levels[0]) if hasattr(df.columns, "levels") else []
 
     for symbol in tickers:
         if symbol not in available_symbols:
@@ -103,29 +137,48 @@ def fetch_stock_ohlcv(stocks: list[dict]) -> list[dict]:
             continue
 
         last_row = sub.iloc[-1]
+        first_row = sub.iloc[0]
+
         idx = sub.index[-1]
         ts = idx.to_pydatetime().replace(microsecond=0) if hasattr(idx, "to_pydatetime") else idx
 
-        info = fetch_ticker_info_with_retry(symbol)
-        regular_price = info.get("regularMarketPrice")
-        regular_volume = info.get("regularMarketVolume")
-        regular_change_pct = info.get("regularMarketChangePercent")
+        info = _load_info_from_cache(symbol) or {}
+        
+
+        if not info:
+            fresh_info = fetch_ticker_info_with_retry(symbol)
+            if fresh_info:
+                info = fresh_info
+                _save_info_to_cache(symbol, fresh_info)
+
+        if regular_price is None:
+            regular_price = float(last_row["Close"]) if last_row["Close"] is not None else None
+
+        if regular_volume is None:
+            regular_volume = float(last_row["Volume"]) if last_row["Volume"] is not None else None
+
+        if regular_change_pct is None:
+            first_close = float(first_row["Close"]) if first_row["Close"] is not None else None
+            if first_close and regular_price:
+                regular_change_pct = ((float(regular_price) / first_close) - 1.0) * 100.0
 
         volume_usd = (float(regular_price) * float(regular_volume)) if (regular_price and regular_volume) else None
         return_24h = (float(regular_change_pct) / 100.0) if regular_change_pct is not None else None
 
-        result.append({
-            "symbol": symbol,
-            "name": name_by_symbol.get(symbol),
-            "datetime": ts.isoformat(),
-            "open": float(last_row["Open"]),
-            "high": float(last_row["High"]),
-            "low": float(last_row["Low"]),
-            "close": float(last_row["Close"]),
-            "volume": int(last_row["Volume"]),
-            "volume_usd": volume_usd,
-            "return_24h": return_24h,
-        })
+        result.append(
+            {
+                "symbol": symbol,
+                "name": name_by_symbol.get(symbol),
+                "datetime": ts.isoformat(),
+                "open": float(last_row["Open"]),
+                "high": float(last_row["High"]),
+                "low": float(last_row["Low"]),
+                "close": float(last_row["Close"]),
+                "volume": int(last_row["Volume"]) if last_row["Volume"] is not None else 0,
+                "volume_usd": volume_usd,
+                "return_24h": return_24h,
+            }
+        )
 
     logger.info(f"Successfully processed OHLCV data for {len(result)} stocks.")
     return result

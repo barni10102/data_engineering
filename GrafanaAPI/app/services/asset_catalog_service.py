@@ -1,9 +1,7 @@
 from typing import  Any
 
 from fastapi import HTTPException
-
 from app.db.postgres import get_postgres_connection
-
 
 
 def get_assets_by_type(asset_type: str) -> list[dict[str, Any]] | None:
