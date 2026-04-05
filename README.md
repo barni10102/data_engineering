@@ -59,7 +59,11 @@ docker compose up -d --build
 
 A parancs hatására minden szolgáltatás elindul, az adatbázis sémák inicializálódnak és megkezdődik az automatikus adatgyűjtés.
 
-### Side note / Warning
+### Megjegyzés
+
+A rendszer induláskor automatikusan megpróbál seed adatot betölteni a csomagolt raw.zip fájlból, ezért a dashboardok első indítás után is tartalmazhatnak adatot. A megjelenített adatok időtartománya a seed fájlban lévő időbélyegektől függ, ezért ha egy panel üresnek látszik, érdemes az időszűrőt átállítani (pl. szélesebb vagy egyedi időintervallumra), hogy a meglévő adatok láthatóvá váljanak.
+
+### Figyelmeztetés
 
 A számítógép operációs rendszerétől és jogosultságaitól függően előfordulhat, hogy a MinIO mc (client) scriptje Permission Denied hibát ad az automatikus indításkor. Ebben az esetben a raw bucket nem jön létre automatikusan és nem lesz publikus, ami megállítja az adatfolyamot.
 

@@ -5,6 +5,7 @@ import io
 from typing import Any
 
 import yfinance as yf
+import pandas as pd
 from datetime import datetime
 
 from app.db.postgres import get_postgres_connection
@@ -143,13 +144,20 @@ def fetch_stock_ohlcv(stocks: list[dict]) -> list[dict]:
         ts = idx.to_pydatetime().replace(microsecond=0) if hasattr(idx, "to_pydatetime") else idx
 
         info = _load_info_from_cache(symbol) or {}
-        
 
         if not info:
             fresh_info = fetch_ticker_info_with_retry(symbol)
             if fresh_info:
                 info = fresh_info
                 _save_info_to_cache(symbol, fresh_info)
+
+        regular_price_raw = pd.to_numeric(info.get("regularMarketPrice"), errors="coerce")
+        regular_volume_raw = pd.to_numeric(info.get("regularMarketVolume"), errors="coerce")
+        regular_change_pct_raw = pd.to_numeric(info.get("regularMarketChangePercent"), errors="coerce")
+
+        regular_price = None if pd.isna(regular_price_raw) else float(regular_price_raw)
+        regular_volume = None if pd.isna(regular_volume_raw) else float(regular_volume_raw)
+        regular_change_pct = None if pd.isna(regular_change_pct_raw) else float(regular_change_pct_raw)
 
         if regular_price is None:
             regular_price = float(last_row["Close"]) if last_row["Close"] is not None else None

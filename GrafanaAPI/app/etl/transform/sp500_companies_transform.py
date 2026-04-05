@@ -60,7 +60,7 @@ def transform_sp500_data(s3_path: str) -> tuple[DataFrame, DataFrame] | None:
     sector_stats_df['avg_marketcap'] = sector_stats_df['avg_marketcap'].fillna(0.0)
     sector_stats_df['total_weight'] = sector_stats_df['total_weight'].fillna(0.0)
 
-    universe_df: pd.DataFrame = df[['symbol', 'name', 'marketcap']].copy()
+    universe_df: pd.DataFrame = df[['symbol', 'name', 'sector', 'marketcap', 'weight']].copy()
 
     logger.info("Pandas transformation completed successfully.")
 
