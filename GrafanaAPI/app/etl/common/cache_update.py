@@ -1,3 +1,5 @@
+"""Compute and refresh Redis cache keys used by top-movers API endpoints."""
+
 import json
 
 from prefect import task, get_run_logger
@@ -9,6 +11,11 @@ CACHE_TTL_SECONDS = 360  # 6 minutes
 
 @task(retries=2, retry_delay_seconds=10)
 def update_top_movers_cache(asset_type: str):
+    """Compute and cache top movers for a requested asset type and the combined view.
+
+    Args:
+        asset_type: One of "crypto" or "stock".
+    """
     logger = get_run_logger()
 
     allowed_types = ['crypto', 'stock']
@@ -19,6 +26,7 @@ def update_top_movers_cache(asset_type: str):
 
     logger.info(f"Updating Top Movers cache for '{asset_type}' in Redis...")
 
+    # Use asset-type-specific latest dates to avoid weekend stock gaps being masked by crypto activity.
     queries = {
         "crypto": {
             "key": "asset:top_movers:crypto",
@@ -84,6 +92,7 @@ def update_top_movers_cache(asset_type: str):
         },
     }
 
+    # Refresh both the requested category and the combined leaderboard in one DB pass.
     tasks_to_run = [asset_type, "all"]
 
     conn = get_postgres_connection()
@@ -97,8 +106,10 @@ def update_top_movers_cache(asset_type: str):
                 results = cur.fetchall()
 
                 if results:
+                    # Serialize decimal-compatible DB values into JSON-friendly payload.
                     redis_json = json.dumps(results, default=float, ensure_ascii=False)
                     if category == "stock":
+                        # Stock movers are intentionally non-expiring so weekend dashboards stay populated.
                         redis_client.set(data["key"], redis_json)
                     else:
                         redis_client.set(data["key"], redis_json, ex=CACHE_TTL_SECONDS)

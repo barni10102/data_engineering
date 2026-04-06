@@ -1,3 +1,5 @@
+"""Load S&P500 transformed reference datasets into current and historical tables."""
+
 import pandas as pd
 from datetime import datetime, timezone
 
@@ -7,6 +9,7 @@ from app.db.postgres import get_postgres_connection
 
 @task(retries=2, retry_delay_seconds=10)
 def load_sp500_to_postgres(data: tuple[pd.DataFrame, pd.DataFrame] | None):
+    """Load S&P500 reference data into current tables and SCD Type 2 history."""
     logger = get_run_logger()
 
     if data is None:
@@ -52,6 +55,7 @@ def load_sp500_to_postgres(data: tuple[pd.DataFrame, pd.DataFrame] | None):
                     );
 
                     CREATE TABLE IF NOT EXISTS config.stock_universe_hist (
+                        -- SCD2 history table keeps full attribute change timeline per symbol.
                         company_hist_id  bigserial PRIMARY KEY,
                         symbol           text NOT NULL,
                         name             text,
@@ -84,6 +88,7 @@ def load_sp500_to_postgres(data: tuple[pd.DataFrame, pd.DataFrame] | None):
 
                 cur.execute(
                     """
+                    -- Enforce only one active SCD2 row per symbol.
                     CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_universe_hist_current
                     ON config.stock_universe_hist(symbol)
                     WHERE is_current;
@@ -134,6 +139,7 @@ def load_sp500_to_postgres(data: tuple[pd.DataFrame, pd.DataFrame] | None):
 
                 cur.execute(
                     """
+                    -- Step 1: close currently active rows when any tracked attribute changed.
                     UPDATE config.stock_universe_hist h
                     SET valid_to = %s,
                         is_current = false,
@@ -153,6 +159,7 @@ def load_sp500_to_postgres(data: tuple[pd.DataFrame, pd.DataFrame] | None):
 
                 cur.execute(
                     """
+                    -- Step 2: insert new active version for new or changed symbols.
                     INSERT INTO config.stock_universe_hist (
                         symbol, name, sector, marketcap, weight, valid_from, valid_to, is_current, updated_at
                     )
@@ -174,6 +181,7 @@ def load_sp500_to_postgres(data: tuple[pd.DataFrame, pd.DataFrame] | None):
 
                 cur.execute(
                     """
+                    -- Step 3: close symbols that disappeared from the latest snapshot.
                     UPDATE config.stock_universe_hist h
                     SET valid_to = %s,
                         is_current = false,

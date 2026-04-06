@@ -1,3 +1,5 @@
+"""Stock extraction tasks using yfinance with Redis-backed metadata caching."""
+
 import random
 import time
 import json
@@ -19,10 +21,12 @@ INFO_CACHE_TTL_SECONDS = 6 * 60 * 60
 
 
 def _info_cache_key(symbol: str) -> str:
+    """Build Redis key used for per-symbol yfinance metadata cache."""
     return f"stock:info:{symbol}"
 
 
 def _load_info_from_cache(symbol: str) -> dict[str, Any] | None:
+    """Load cached yfinance info payload for a stock symbol if available."""
     try:
         cached = redis_client.get(_info_cache_key(symbol))
         if not cached:
@@ -34,6 +38,7 @@ def _load_info_from_cache(symbol: str) -> dict[str, Any] | None:
     
 
 def _save_info_to_cache(symbol: str, info: dict[str, Any]) -> None:
+    """Persist yfinance info payload to Redis to reduce upstream API pressure."""
     try:
         redis_client.set(
             _info_cache_key(symbol),
@@ -46,6 +51,7 @@ def _save_info_to_cache(symbol: str, info: dict[str, Any]) -> None:
 
 def fetch_ticker_info_with_retry(symbol: str, max_retries: int = 10, base_delay: float = 0.5) -> None | dict | dict[
     Any, Any]:
+    """Fetch ticker metadata from yfinance with retry and incremental backoff."""
     logger = get_run_logger()
     for attempt in range(1, max_retries + 1):
         try:
@@ -55,6 +61,7 @@ def fetch_ticker_info_with_retry(symbol: str, max_retries: int = 10, base_delay:
             raise ValueError("Empty info dict returned from yfinance")
         except Exception as e:
             if attempt < max_retries:
+                # Linear backoff with jitter reduces API burst retries across symbols.
                 sleep_s = base_delay * attempt + random.uniform(0.1, 0.4)
                 time.sleep(sleep_s)
             else:
@@ -64,6 +71,7 @@ def fetch_ticker_info_with_retry(symbol: str, max_retries: int = 10, base_delay:
 
 @task(retries=3, retry_delay_seconds=5)
 def get_stocks_from_db(top_n: int = 10) -> list[dict]:
+    """Read top-N stock symbols from reference universe table by market cap."""
     logger = get_run_logger()
     logger.info(f"Fetching top {top_n} stocks from database...")
 
@@ -97,6 +105,7 @@ def get_stocks_from_db(top_n: int = 10) -> list[dict]:
 
 @task(retries=3, retry_delay_seconds=30)
 def fetch_stock_ohlcv(stocks: list[dict]) -> list[dict]:
+    """Download intraday OHLCV for selected stocks and shape payload for raw landing."""
     logger = get_run_logger()
 
     if not stocks:
@@ -115,6 +124,7 @@ def fetch_stock_ohlcv(stocks: list[dict]) -> list[dict]:
             group_by="ticker",
             auto_adjust=False,
             progress=False,
+            # Keep deterministic behavior and avoid yfinance thread burst/rate-limit issues.
             threads=False,
         )
     except Exception as e:
@@ -124,6 +134,7 @@ def fetch_stock_ohlcv(stocks: list[dict]) -> list[dict]:
 
     if len(tickers) == 1:
         available_symbols = tickers
+        # Normalize single-symbol response shape to match multi-symbol access pattern below.
         df = {tickers[0]: df}
     else:
         available_symbols = list(df.columns.levels[0]) if hasattr(df.columns, "levels") else []
@@ -151,6 +162,7 @@ def fetch_stock_ohlcv(stocks: list[dict]) -> list[dict]:
                 info = fresh_info
                 _save_info_to_cache(symbol, fresh_info)
 
+        # Prefer metadata fields when present (can differ from last candle close/volume).
         regular_price_raw = pd.to_numeric(info.get("regularMarketPrice"), errors="coerce")
         regular_volume_raw = pd.to_numeric(info.get("regularMarketVolume"), errors="coerce")
         regular_change_pct_raw = pd.to_numeric(info.get("regularMarketChangePercent"), errors="coerce")
@@ -159,6 +171,7 @@ def fetch_stock_ohlcv(stocks: list[dict]) -> list[dict]:
         regular_volume = None if pd.isna(regular_volume_raw) else float(regular_volume_raw)
         regular_change_pct = None if pd.isna(regular_change_pct_raw) else float(regular_change_pct_raw)
 
+        # Fallback to OHLCV candles when metadata fields are missing.
         if regular_price is None:
             regular_price = float(last_row["Close"]) if last_row["Close"] is not None else None
 
@@ -194,6 +207,7 @@ def fetch_stock_ohlcv(stocks: list[dict]) -> list[dict]:
 
 @task(retries=3, retry_delay_seconds=10)
 def save_stocks_to_minio(data: list[dict]) -> str:
+    """Persist stock raw snapshots to MinIO and return written s3:// object path."""
     logger = get_run_logger()
 
     bucket_name = config.MINIO_RAW_BUCKET
@@ -209,6 +223,7 @@ def save_stocks_to_minio(data: list[dict]) -> str:
         client.make_bucket(bucket_name)
 
     timestamp_dt = datetime.now()
+    # Store raw files with date partitioning so historical reprocessing is straightforward.
     folder_path = timestamp_dt.strftime("stocks/year=%Y/month=%m/day=%d")
     object_name = f"{folder_path}/stocks_{timestamp_dt.strftime('%H%M%S')}.json"
 
@@ -230,6 +245,7 @@ def save_stocks_to_minio(data: list[dict]) -> str:
 
 @flow(name="Stock Extraction Pipeline")
 def fetch_stocks_flow(top_n: int = 10):
+    """Run stock extraction end-to-end: universe lookup, market pull, and MinIO landing."""
     stocks = get_stocks_from_db(top_n=top_n)
     data = fetch_stock_ohlcv(stocks=stocks)
     path = save_stocks_to_minio(data=data)

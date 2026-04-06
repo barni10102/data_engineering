@@ -1,9 +1,16 @@
+"""Idempotent bootstrap helpers for creating DWH schema objects."""
+
 import logging
 from app.db.postgres import get_postgres_connection
 
 logger = logging.getLogger(__name__)
 
 def ensure_dwh_schema_exists():
+    """Create or validate core DWH schema objects required by load tasks.
+
+    The function is idempotent and safe to run before each load cycle.
+    """
+    # Idempotent bootstrap: safe to call from every load task before writing facts.
     conn = get_postgres_connection()
     try:
         with conn.transaction():
@@ -42,6 +49,7 @@ def ensure_dwh_schema_exists():
                     
                     CREATE MATERIALIZED VIEW IF NOT EXISTS dwh.daily_price_fact AS
                     WITH last_snap AS (
+                        -- Keep one daily closing snapshot per asset (latest intraday point in UTC day).
                         SELECT DISTINCT ON (asset_id, (snapshot_ts AT TIME ZONE 'UTC')::date)
                             asset_id,
                             (snapshot_ts AT TIME ZONE 'UTC')::date AS price_date,

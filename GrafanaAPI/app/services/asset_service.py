@@ -1,3 +1,5 @@
+"""Service helpers for latest asset snapshot endpoints with cache-first reads."""
+
 import json
 from typing import List, Dict, Any
 from datetime import datetime, timezone
@@ -8,10 +10,12 @@ from app.db.postgres import get_postgres_connection
 
 
 def _epoch_ms_to_datetime(ms: int) -> datetime:
+    """Convert epoch milliseconds to UTC datetime object."""
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
 
 
 def _load_crypto_from_cache() -> List[Dict[str, Any]] | None:
+    """Read latest crypto batch from Redis cache."""
     key = "asset:latest_batch:crypto"
     try:
         cached = redis_client.get(key)
@@ -34,6 +38,8 @@ def _load_crypto_from_cache() -> List[Dict[str, Any]] | None:
     
 
 def _load_latest_crypto_from_db() -> List[Dict[str, Any]] | None:
+    """Read latest available crypto snapshot from DWH."""
+    # Join against the latest crypto snapshot timestamp to return one consistent batch.
     sql = """
         WITH latest AS (
             SELECT MAX(f.snapshot_ts) AS last_ts
@@ -69,6 +75,7 @@ def _load_latest_crypto_from_db() -> List[Dict[str, Any]] | None:
     if not rows:
         return None
 
+    # Convert DB rows to plain JSON-friendly dict payload expected by API handlers.
     out: List[Dict[str, Any]] = []
     for row in rows:
         out.append(
@@ -87,6 +94,7 @@ def _load_latest_crypto_from_db() -> List[Dict[str, Any]] | None:
 
 
 def _get_latest_crypto() -> List[Dict[str, Any]]:
+    """Return latest crypto rows using cache-first strategy with DB fallback."""
     data = _load_crypto_from_cache()
     if data is not None:
         return data
@@ -96,6 +104,7 @@ def _get_latest_crypto() -> List[Dict[str, Any]]:
         return []
     
     try:
+        # Refill cache after DB fallback to keep subsequent reads fast.
         redis_json = json.dumps(db_data, default=str, ensure_ascii=False)
         redis_client.set("asset:latest_batch:crypto", redis_json, ex=360)
     except Exception as e:
@@ -105,6 +114,7 @@ def _get_latest_crypto() -> List[Dict[str, Any]]:
 
 
 def _load_stock_from_cache() -> List[Dict[str, Any]] | None:
+    """Read latest stock batch from Redis cache."""
     key = "asset:latest_batch:stock"
     try:
         cached = redis_client.get(key)
@@ -122,6 +132,7 @@ def _load_stock_from_cache() -> List[Dict[str, Any]] | None:
 
         for item in data:
             for ts_key in ("snapshot_ts", "datetime"):
+                # Backward compatibility: older cache payloads may contain epoch millis.
                 if isinstance(item.get(ts_key), (int, float)):
                     item[ts_key] = _epoch_ms_to_datetime(int(item[ts_key]))
 
@@ -131,6 +142,8 @@ def _load_stock_from_cache() -> List[Dict[str, Any]] | None:
         return None
     
 def _load_latest_stock_from_db() -> List[Dict[str, Any]] | None:
+    """Read latest available stock snapshot from DWH."""
+    # Join against the latest stock snapshot timestamp to return one consistent batch.
     sql = """
         WITH latest AS (
             SELECT MAX(f.snapshot_ts) AS last_ts
@@ -166,6 +179,7 @@ def _load_latest_stock_from_db() -> List[Dict[str, Any]] | None:
     if not rows:
         return None
 
+    # Convert DB rows to plain JSON-friendly dict payload expected by API handlers.
     out: List[Dict[str, Any]] = []
     for row in rows:
         out.append(
@@ -184,6 +198,7 @@ def _load_latest_stock_from_db() -> List[Dict[str, Any]] | None:
 
 
 def _get_latest_stock() -> List[Dict[str, Any]]:
+    """Return latest stock rows using cache-first strategy with DB fallback."""
     data = _load_stock_from_cache()
     if data is not None:
         return data
@@ -193,6 +208,7 @@ def _get_latest_stock() -> List[Dict[str, Any]]:
         return []
     
     try:
+        # Refill cache after DB fallback to keep subsequent reads fast.
         redis_json = json.dumps(db_data, default=str, ensure_ascii=False)
         redis_client.set("asset:latest_batch:stock", redis_json, ex=360)
     except Exception as e:
@@ -202,6 +218,8 @@ def _get_latest_stock() -> List[Dict[str, Any]]:
 
 
 def get_latest_assets(asset_type: str) -> List[Dict[str, Any]]:
+    """Dispatch latest-batch query by asset type."""
+    # Keep explicit branching to make API behavior obvious and predictable.
     if asset_type == "crypto":
         return _get_latest_crypto()
     elif asset_type == "stock":

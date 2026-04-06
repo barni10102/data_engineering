@@ -1,3 +1,5 @@
+"""Prefect flow orchestrating end-to-end stock ETL and serving refresh."""
+
 from prefect import flow, get_run_logger
 
 from app.etl.common.cache_update import update_top_movers_cache
@@ -9,12 +11,14 @@ from app.etl.load.stock_load import load_stock_data
 
 @flow(name="Stock Full ETL Pipeline")
 def stock_full_etl_flow():
+    """Run full stock ETL: extract intraday data, transform, load, and refresh serving layers."""
     logger = get_run_logger()
     logger.info("Starting Full Stock ETL Pipeline...")
 
     s3_raw_path = fetch_stocks_flow(top_n=15)
 
     if s3_raw_path:
+        # Stock flow updates both daily view and stock-specific movers cache used by dashboards.
         transformed_df = transform_stock_data(s3_path=s3_raw_path)
         load_stock_data(df=transformed_df)
         refresh_daily_view()

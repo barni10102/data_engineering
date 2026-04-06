@@ -1,3 +1,5 @@
+"""Top-movers query helpers with Redis-first reads and DB fallback."""
+
 import json
 from typing import List, Dict, Any
 
@@ -6,11 +8,13 @@ from app.db.redis_client import redis_client
 
 
 def _normalize(data: List[Dict[str, Any]], asset_type: str) -> List[Dict[str, Any]]:
+    """Normalize cached/DB rows to consistent numeric fields."""
     out: List[Dict[str, Any]] = []
 
     for item in data:
         row = dict(item)
 
+        # Cached payloads can contain numbers serialized as strings.
         val = row.get("return_1d")
         if isinstance(val, str):
             try:
@@ -28,6 +32,8 @@ def _normalize(data: List[Dict[str, Any]], asset_type: str) -> List[Dict[str, An
         if asset_type == "all":
             r = row.get("return_1d")
             if isinstance(r, (int, float)):
+                # Keep legacy dashboard sorting behavior for mixed asset leaderboard.
+                # Stocks are inverted so descending sort still places strongest movers first.
                 row["signed_return"] = r if row.get("asset_type") == "crypto" else -r
             else:
                 row["signed_return"] = None
@@ -38,6 +44,7 @@ def _normalize(data: List[Dict[str, Any]], asset_type: str) -> List[Dict[str, An
 
 
 def _load_top_movers_from_cache(asset_type: str) -> List[Dict[str, Any]] | None:
+    """Read top movers list from Redis cache for requested category."""
     key = f"asset:top_movers:{asset_type}"
 
     try:
@@ -62,6 +69,8 @@ def _load_top_movers_from_cache(asset_type: str) -> List[Dict[str, Any]] | None:
 
 
 def _load_top_movers_from_db(asset_type: str) -> List[Dict[str, Any]]:
+    """Read top movers directly from DWH when cache is missing."""
+    # Queries are intentionally split by asset type because latest available dates can differ.
     queries = {
         "crypto": """
             WITH last_date AS (
@@ -134,7 +143,9 @@ def _load_top_movers_from_db(asset_type: str) -> List[Dict[str, Any]]:
 
 
 def get_top_movers(asset_type: str) -> List[Dict[str, Any]]:
+    """Return top movers using cache-first strategy with DB fallback."""
     if asset_type not in ("crypto", "stock", "all"):
+        # Keep service-level safety in case route validation is bypassed in internal calls.
         return []
 
     data = _load_top_movers_from_cache(asset_type)

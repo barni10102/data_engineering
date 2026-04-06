@@ -1,3 +1,5 @@
+"""Load transformed crypto records into Redis cache and PostgreSQL DWH tables."""
+
 import pandas as pd
 
 from prefect import task, get_run_logger
@@ -20,6 +22,7 @@ REQUIRED_COLUMNS = {
 
 @task(retries=2, retry_delay_seconds=10)
 def load_crypto_data(df: pd.DataFrame | None):
+    """Load transformed crypto rows into cache and DWH tables with idempotent upserts."""
     logger = get_run_logger()
 
     if df is None or df.empty:
@@ -31,12 +34,14 @@ def load_crypto_data(df: pd.DataFrame | None):
         raise ValueError(f"Missing required columns in crypto load: {sorted(missing_cols)}")
     
     df = df.copy()
+    # Enforce required fact keys before any cache or DB writes.
     df = df.dropna(subset=["snapshot_ts", "close_price", "symbol"])
     if df.empty:
         logger.warning("No valid rows left for load after required field checks.")
         return
     
     ts_utc = pd.to_datetime(df["snapshot_ts"], utc=True, errors="coerce")
+    # date_id is derived from the real snapshot timestamp (no artificial weekend shifting).
     df["date_id"] = ts_utc.dt.date
     df = df.dropna(subset=["date_id"])
     if df.empty:
@@ -46,6 +51,7 @@ def load_crypto_data(df: pd.DataFrame | None):
     logger.info("Starting Postgres and Redis Load for Crypto...")
 
     try:
+        # Latest-batch cache is used by fast API endpoints before DB fallback.
         cache_df = df.drop(columns=["date_id"])
         redis_json = cache_df.to_json(orient='records', date_format='iso')
         redis_client.set("asset:latest_batch:crypto", redis_json, ex=CACHE_TTL_SECONDS)
@@ -53,6 +59,7 @@ def load_crypto_data(df: pd.DataFrame | None):
     except Exception as e:
         logger.error(f"Failed to update Redis: {e}")
 
+    # DWH objects are created lazily to support first-run startup on empty databases.
     ensure_dwh_schema_exists()
 
     conn = get_postgres_connection()
@@ -60,6 +67,7 @@ def load_crypto_data(df: pd.DataFrame | None):
         with conn.transaction():
             with conn.cursor() as cur:
                 logger.info("Upserting dwh.date_dim from snapshot_ts dates...")
+                # Upsert unique calendar keys referenced by fact rows.
                 unique_dates = sorted(set(df["date_id"].tolist()))
                 date_dim_values = [
                     (d, d.year, d.month, d.day, d.isoweekday() in (6, 7))
@@ -86,15 +94,18 @@ def load_crypto_data(df: pd.DataFrame | None):
                     dim_values,
                 )
 
+                # Build fast symbol->asset_id lookup to resolve foreign keys for fact inserts.
                 cur.execute("SELECT asset_type, symbol, asset_id FROM dwh.asset_dim WHERE asset_type = 'crypto'")
                 asset_map = {(row["asset_type"], row["symbol"]): row["asset_id"] for row in cur.fetchall()}
 
                 fact_values = []
                 for _, row in df.iterrows():
                     asset_id = asset_map.get((row["asset_type"], row["symbol"]))
+                    # Skip rows that cannot be resolved to an asset dimension key.
                     if not asset_id:
                         continue
 
+                    # Normalize pandas timestamps to plain Python datetime for psycopg binding.
                     snapshot_ts = (
                         row["snapshot_ts"].to_pydatetime()
                         if hasattr(row["snapshot_ts"], "to_pydatetime")
@@ -125,6 +136,7 @@ def load_crypto_data(df: pd.DataFrame | None):
                     )
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (asset_id, snapshot_ts) DO UPDATE SET
+                        -- Idempotent retry behavior: reruns update existing rows instead of duplicating.
                         close_price = EXCLUDED.close_price,
                         volume      = EXCLUDED.volume,
                         volume_usd  = EXCLUDED.volume_usd,

@@ -1,3 +1,5 @@
+"""Local bootstrap pipeline for seeding market raw data into MinIO and DWH."""
+
 import io
 import mimetypes
 import zipfile
@@ -17,6 +19,10 @@ from app.etl.load.stock_load import load_stock_data
 
 @task
 def seed_minio_from_local_zip(zip_path: str) -> dict:
+    """Upload optional local raw.zip content into MinIO raw bucket.
+
+    Accepts partial archives (only crypto or only stocks) and safely returns summary metadata.
+    """
     logger = get_run_logger()
     p = Path(zip_path)
 
@@ -46,6 +52,7 @@ def seed_minio_from_local_zip(zip_path: str) -> dict:
             if not name.startswith("raw/"):
                 continue
 
+            # Keep archive layout compatible with existing MinIO object naming conventions.
             object_name = name[len("raw/"):]
             if not (object_name.startswith("crypto/") or object_name.startswith("stocks/")):
                 continue
@@ -76,6 +83,7 @@ def seed_minio_from_local_zip(zip_path: str) -> dict:
 
 @task
 def load_seeded_market_data(seed: dict) -> dict:
+    """Run transform+load steps for seeded MinIO objects and refresh serving caches."""
     logger = get_run_logger()
 
     crypto_loaded_files = 0
@@ -96,6 +104,7 @@ def load_seeded_market_data(seed: dict) -> dict:
         stock_loaded_files += 1
 
     if crypto_loaded_files > 0 or stock_loaded_files > 0:
+        # Refresh aggregated layers only when new fact data was actually loaded.
         refresh_daily_view()
         if crypto_loaded_files > 0:
             update_top_movers_cache(asset_type="crypto")
@@ -112,6 +121,7 @@ def load_seeded_market_data(seed: dict) -> dict:
 
 @flow(name="Market Local Raw Bootstrap")
 def bootstrap_market_from_local_raw_zip(zip_path: str) -> dict:
+    """Bootstrap market history from local raw archive and return status summary."""
     seed = seed_minio_from_local_zip(zip_path=zip_path)
     if seed["uploaded_files"] == 0:
         return {"status": "no_seed_data", **seed}

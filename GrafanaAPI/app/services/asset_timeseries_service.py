@@ -1,3 +1,5 @@
+"""Timeseries service functions for single-asset and indexed multi-asset charts."""
+
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -10,6 +12,8 @@ def _default_from_to(
     date_from: Optional[datetime],
     date_to: Optional[datetime],
 ) -> tuple[datetime, datetime]:
+    """Apply default time window when explicit from/to parameters are missing."""
+    # Default API window is the last 7 days to keep payload size and query time bounded.
     now = datetime.now(timezone.utc)
     if date_to is None:
         date_to = now
@@ -24,6 +28,10 @@ def get_asset_price_series(
     date_from: Optional[datetime],
     date_to: Optional[datetime],
 ) -> dict[str, list[dict[str, Any]] | Any] | None:
+    """Return detailed timeseries points for one asset.
+
+    For stocks, falls back to the last available trading window when requested range is empty.
+    """
     if asset_type not in ("crypto", "stock"):
         raise HTTPException(status_code=400, detail="Invalid asset_type")
 
@@ -57,6 +65,7 @@ def get_asset_price_series(
             if asset_type == "crypto":
                 raise HTTPException(status_code=404, detail="No data for given symbol / time range")
 
+            # Stock markets can be closed in the requested window (weekend/holiday), so retry near last trade.
             sql_last = """
                     SELECT max(f.snapshot_ts) AS last_ts
                     FROM dwh.asset_dim ad
@@ -117,6 +126,7 @@ def _fetch_index_rows(
     date_from: datetime,
     date_to: datetime,
 ) -> List[Dict[str, Any]]:
+    """Fetch raw close-price rows for multi-symbol indexed comparison."""
     sql = """
         SELECT
             ad.asset_type,
@@ -137,6 +147,7 @@ def _fetch_index_rows(
 
 
 def _last_stock_ts_for_symbols(conn, symbols: List[str]) -> Optional[datetime]:
+    """Get latest stock timestamp across requested symbols for fallback windowing."""
     sql = """
         SELECT MAX(f.snapshot_ts) AS last_ts
         FROM dwh.asset_dim ad
@@ -155,6 +166,7 @@ def get_assets_indexed_series(
     date_from: Optional[datetime],
     date_to: Optional[datetime],
 ) -> dict[str, list[dict[str, Any]]] | None:
+    """Return normalized comparison series where each symbol starts at index value 100."""
 
     symbols_clean = [s.strip().upper() for s in symbols if s.strip()]
 
@@ -168,6 +180,7 @@ def get_assets_indexed_series(
         rows = _fetch_index_rows(conn, symbols_clean, date_from, date_to)
     
         if not rows:
+            # Weekend/holiday fallback for stock-heavy symbol sets.
             last_ts = _last_stock_ts_for_symbols(conn, symbols_clean)
             if last_ts is not None:
                 window = date_to - date_from
@@ -186,6 +199,7 @@ def get_assets_indexed_series(
         flat_series: List[Dict[str, Any]] = []
 
         for (asset_type, sym), sym_rows in grouped.items():
+            # Use first valid close as series baseline; indexed value starts from 100.
             base_price: Optional[float] = None
             for r in sym_rows:
                 cp = r["close_price"]
@@ -201,6 +215,7 @@ def get_assets_indexed_series(
                 if cp is None:
                     continue
                 cp_float = float(cp)
+                # Indexed view: first valid point becomes 100, later points show relative performance.
                 normalized = (cp_float / base_price) * 100.0
 
                 flat_series.append(

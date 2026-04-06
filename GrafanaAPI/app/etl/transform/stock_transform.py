@@ -1,3 +1,5 @@
+"""Transform raw stock snapshots from MinIO into normalized ETL rows."""
+
 import json
 import pandas as pd
 from datetime import datetime, timezone
@@ -7,10 +9,12 @@ from app.db.minio_client import get_minio_client
 
 @task(retries=2, retry_delay_seconds=10)
 def transform_stock_data(s3_path: str) -> pd.DataFrame | None:
+    """Transform raw stock JSON snapshot into normalized rows for DWH load."""
     logger = get_run_logger()
     logger.info(f"Starting Pandas transformation for Stock: {s3_path}")
 
     path_without_scheme = s3_path.replace("s3://", "")
+    # Split canonical object-storage path to bucket and object key.
     bucket_name, object_name = path_without_scheme.split("/", 1)
     client = get_minio_client()
 
@@ -40,6 +44,7 @@ def transform_stock_data(s3_path: str) -> pd.DataFrame | None:
         name = str(item.get("name", "Unknown")).strip() or "Unknown"
 
         snapshot_ts = pd.to_datetime(item.get("datetime"), utc=True, errors="coerce")
+        # Snapshot timestamp and close price are required for fact-table key and analytics.
         if pd.isna(snapshot_ts):
             continue
 
@@ -47,6 +52,7 @@ def transform_stock_data(s3_path: str) -> pd.DataFrame | None:
         if pd.isna(close_price):
             continue
 
+        # Optional fields are kept nullable to avoid dropping otherwise valid price points.
         volume = pd.to_numeric(item.get("volume"), errors="coerce")
         volume_usd = pd.to_numeric(item.get("volume_usd"), errors="coerce")
         return_24h = pd.to_numeric(item.get("return_24h"), errors="coerce")
@@ -69,6 +75,7 @@ def transform_stock_data(s3_path: str) -> pd.DataFrame | None:
         return None
 
     df = pd.DataFrame(clean_records)
+    # Keep the latest row when duplicate symbol+timestamp appears in raw data.
     df = df.drop_duplicates(subset=["symbol", "snapshot_ts"], keep="last")
     logger.info(f"Stock transformation complete. Processed {len(df)} records.")
 

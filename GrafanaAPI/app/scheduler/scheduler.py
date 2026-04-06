@@ -1,3 +1,5 @@
+"""Scheduler entrypoint for initial bootstrap checks and Prefect deployments."""
+
 from prefect import serve
 from pathlib import Path
 from app.db.postgres import get_postgres_connection
@@ -8,6 +10,7 @@ from app.scheduler.pipelines.seed_data import bootstrap_market_from_local_raw_zi
 
 
 def is_initial_load_needed() -> bool | None:
+    """Check whether S&P500 reference tables need initial bootstrap population."""
     conn= None
     needs_load = True
     try:
@@ -32,6 +35,7 @@ def is_initial_load_needed() -> bool | None:
 
 
 def has_market_data() -> bool:
+    """Return True when intraday fact table exists and contains at least one row."""
     conn = None
     try:
         conn = get_postgres_connection()
@@ -53,6 +57,7 @@ def has_market_data() -> bool:
 if __name__ == "__main__":
     print("Starting Prefect Scheduler...")
 
+    # Step 1: ensure stock universe exists before scheduled stock extraction starts.
     if is_initial_load_needed():
         print("Database is empty or missing. Running initial S&P 500 Full ETL Pipeline...")
         try:
@@ -63,6 +68,7 @@ if __name__ == "__main__":
     else:
         print("Initial S&P 500 data already exists in Postgres. Skipping initial load.")
 
+    # Step 2: optional local seed bootstrap for demos/tests where no live market history exists yet.
     local_raw_zip = Path(__file__).resolve().parents[1] / "data" / "raw.zip"
 
     if not has_market_data():
@@ -75,6 +81,8 @@ if __name__ == "__main__":
     else:
         print("Market data already exists. Skipping bootstrap.")
 
+    # Step 3: register recurring deployments for reference, stock, and crypto ETL flows.
+    # Cron cadence reflects slower-changing reference data vs near-real-time market updates.
     daily_sp500_companies_deployment = sp500_companies_full_etl_flow.to_deployment(
         name="daily-sp500-full-etl",
         cron="0 0 * * *",

@@ -1,3 +1,5 @@
+"""Prefect flow orchestrating end-to-end crypto ETL and serving refresh."""
+
 from prefect import flow, get_run_logger
 
 from app.etl.common.cache_update import update_top_movers_cache
@@ -8,12 +10,14 @@ from app.etl.load.crypto_load import load_crypto_data
 
 @flow(name="Crypto Full ETL Pipeline")
 def crypto_full_etl_flow():
+    """Run full crypto ETL: extract raw, transform, load, then serving-layer refresh."""
     logger = get_run_logger()
     logger.info("Starting Full Crypto ETL Pipeline...")
 
     s3_raw_path = fetch_crypto_flow(top_n=15)
 
     if s3_raw_path:
+        # Keep transformation and load steps explicit for easier retries and observability in Prefect UI.
         transformed_df = transform_crypto_data(s3_path=s3_raw_path)
         load_crypto_data(df=transformed_df)
         refresh_daily_view()

@@ -1,3 +1,5 @@
+"""Analytics service functions for aggregated views and forecast backtesting."""
+
 import math
 import numpy as np
 import pandas as pd
@@ -14,6 +16,7 @@ def _default_from_to(
     date_from: Optional[datetime],
     date_to: Optional[datetime],
 ) -> tuple[datetime, datetime]:
+    """Resolve optional from/to parameters to a bounded default UTC window."""
     now = datetime.now(timezone.utc)
     if date_to is None:
         date_to = now
@@ -28,6 +31,11 @@ def get_assets_aggregated_summary(
     date_to: Optional[datetime],
     limit: int = 30,
 ) -> Dict[str, Any]:
+    """Return aggregated per-symbol summary stats for the selected time window.
+
+    The query groups intraday facts by asset and computes average return, summed
+    notional volume, and latest available timestamp per symbol.
+    """
     if asset_type not in (None, "crypto", "stock"):
         raise HTTPException(status_code=400, detail="Invalid asset_type")
 
@@ -100,9 +108,11 @@ def get_sp500_sector_stats(
     limit: int = 20,
     sort_by: str = "company_count",
 ) -> Dict[str, Any]:
+    """Return sector-level S&P500 aggregates from reference configuration tables."""
     if limit < 1 or limit > 200:
         raise HTTPException(status_code=400, detail="limit must be between 1 and 200")
 
+    # Whitelist valid SQL ORDER BY fields to keep dynamic sorting safe.
     allowed_sort = {
         "company_count": "company_count",
         "avg_marketcap": "avg_marketcap",
@@ -162,6 +172,12 @@ def get_forecast_backtest(
     date_to: Optional[datetime],
     smoothing_span: int = 12,
 ) -> Dict[str, Any]:
+    """Build a lightweight forecasting backtest payload for one asset symbol.
+
+    The method fetches historical close prices, engineers simple temporal features,
+    computes an EWMA one-step forecast baseline, and returns quality metrics plus
+    point-by-point series data for visualization.
+    """
     if asset_type not in ("crypto", "stock"):
         raise HTTPException(status_code=400, detail="Invalid asset_type")
 
@@ -224,6 +240,7 @@ def get_forecast_backtest(
         conn.close()
 
     df = pd.DataFrame(rows)
+    # Normalize and sanitize raw DB rows before feature engineering.
     df["snapshot_ts"] = pd.to_datetime(df["snapshot_ts"], utc=True, errors="coerce")
     df["close_price"] = pd.to_numeric(df["close_price"], errors="coerce")
     df = df.dropna(subset=["snapshot_ts", "close_price"]).sort_values("snapshot_ts").drop_duplicates("snapshot_ts")

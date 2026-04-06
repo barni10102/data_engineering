@@ -1,3 +1,5 @@
+"""S&P500 reference-data extraction tasks using Kaggle source and MinIO landing."""
+
 import os
 import kagglehub
 from datetime import datetime
@@ -8,6 +10,7 @@ from app.core import config
 
 @task(retries=3, retry_delay_seconds=10)
 def download_sp500_companies_from_kaggle() -> str:
+    """Download the latest S&P500 company CSV from Kaggle and return local path."""
     logger = get_run_logger()
     logger.info("Downloading S&P 500 companies dataset from Kaggle...")
 
@@ -25,6 +28,7 @@ def download_sp500_companies_from_kaggle() -> str:
 
 @task
 def upload_kaggle_to_minio(local_path: str):
+    """Upload the downloaded Kaggle CSV to MinIO raw storage and return s3 path."""
     logger = get_run_logger()
     client = get_minio_client()
     bucket_name = config.MINIO_RAW_BUCKET
@@ -34,6 +38,7 @@ def upload_kaggle_to_minio(local_path: str):
         client.make_bucket(bucket_name)
 
     timestamp_dt = datetime.now()
+    # Reference data is partitioned by date to keep historical snapshots for reproducibility.
     folder_path = timestamp_dt.strftime("reference/sp500/year=%Y/month=%m/day=%d")
     object_name = f"{folder_path}/sp500_companies_{timestamp_dt.strftime('%H%M%S')}.csv"
 
@@ -55,6 +60,7 @@ def upload_kaggle_to_minio(local_path: str):
 
 @flow(name="Daily Kaggle SP 500 Update")
 def daily_sp500_companies_update_flow():
+    """Run the daily S&P500 reference-data extraction flow."""
     local_csv = download_sp500_companies_from_kaggle()
     path = upload_kaggle_to_minio(local_csv)
     return path
