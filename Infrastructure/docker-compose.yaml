@@ -161,7 +161,6 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_RAW_BUCKET: ${MINIO_RAW_BUCKET}
-      MINIO_DWH_BUCKET: ${MINIO_DWH_BUCKET}
       KAGGLE_API_TOKEN: ${KAGGLE_API_TOKEN}
     depends_on:
       # Wait for all infra components to be healthy before starting ETL scheduler to ensure smooth orchestration and avoid connection issues at startup
