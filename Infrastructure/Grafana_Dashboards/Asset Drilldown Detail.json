@@ -113,7 +113,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.4.1",
+      "pluginVersion": "12.4.3",
       "targets": [
         {
           "columns": [
@@ -287,7 +287,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.4.1",
+      "pluginVersion": "12.4.3",
       "targets": [
         {
           "columns": [
@@ -497,18 +497,33 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.4.1",
+      "pluginVersion": "12.4.3",
       "targets": [
         {
           "columns": [
             {
-              "selector": "time",
+              "selector": "snapshot_ts",
               "text": "Time",
-              "type": "timestamp_epoch"
+              "type": "timestamp"
             },
             {
-              "selector": "value",
-              "text": "Value",
+              "selector": "actual",
+              "text": "Actual",
+              "type": "number"
+            },
+            {
+              "selector": "forecast",
+              "text": "Forecast",
+              "type": "number"
+            },
+            {
+              "selector": "lower",
+              "text": "Lower 95%",
+              "type": "number"
+            },
+            {
+              "selector": "upper",
+              "text": "Upper 95%",
               "type": "number"
             }
           ],
@@ -516,101 +531,8 @@
           "format": "table",
           "global_query_id": "",
           "parser": "backend",
-          "refId": "Actual",
-          "root_selector": "$map(points, function($p) {{\"time\": $toMillis($p.snapshot_ts), \"value\": $number($p.actual)}})",
-          "source": "url",
-          "type": "json",
-          "url": "/analytics/forecast-backtest/${Type}/${Symbol}?from=${__from:date:iso}&to=${__to:date:iso}&smoothing_span=12",
-          "url_options": {
-            "data": "",
-            "method": "GET"
-          }
-        },
-        {
-          "columns": [
-            {
-              "selector": "time",
-              "text": "Time",
-              "type": "timestamp_epoch"
-            },
-            {
-              "selector": "value",
-              "text": "Value",
-              "type": "number"
-            }
-          ],
-          "datasource": {
-            "type": "yesoreyeram-infinity-datasource",
-            "uid": "data-engineering-datasource"
-          },
-          "filters": [],
-          "format": "table",
-          "global_query_id": "",
-          "parser": "backend",
-          "refId": "Forecast",
-          "root_selector": "$map(points, function($p) {{\"time\": $toMillis($p.snapshot_ts), \"value\": $number($p.forecast)}})",
-          "source": "url",
-          "type": "json",
-          "url": "/analytics/forecast-backtest/${Type}/${Symbol}?from=${__from:date:iso}&to=${__to:date:iso}&smoothing_span=12",
-          "url_options": {
-            "data": "",
-            "method": "GET"
-          }
-        },
-        {
-          "columns": [
-            {
-              "selector": "time",
-              "text": "Time",
-              "type": "timestamp_epoch"
-            },
-            {
-              "selector": "value",
-              "text": "Value",
-              "type": "number"
-            }
-          ],
-          "datasource": {
-            "type": "yesoreyeram-infinity-datasource",
-            "uid": "data-engineering-datasource"
-          },
-          "filters": [],
-          "format": "table",
-          "global_query_id": "",
-          "parser": "backend",
-          "refId": "Upper 95%",
-          "root_selector": "$map(points, function($p) {{\"time\": $toMillis($p.snapshot_ts), \"value\": $number($p.upper)}})",
-          "source": "url",
-          "type": "json",
-          "url": "/analytics/forecast-backtest/${Type}/${Symbol}?from=${__from:date:iso}&to=${__to:date:iso}&smoothing_span=12",
-          "url_options": {
-            "data": "",
-            "method": "GET"
-          }
-        },
-        {
-          "columns": [
-            {
-              "selector": "time",
-              "text": "Time",
-              "type": "timestamp_epoch"
-            },
-            {
-              "selector": "value",
-              "text": "Value",
-              "type": "number"
-            }
-          ],
-          "datasource": {
-            "type": "yesoreyeram-infinity-datasource",
-            "uid": "data-engineering-datasource"
-          },
-          "filters": [],
-          "format": "table",
-          "global_query_id": "",
-          "parser": "backend",
-          "refId": "Lower 95%",
-          "root_selector": "$map(points, function($p) {{\"time\": $toMillis($p.snapshot_ts), \"value\": $number($p.lower)}})",
+          "refId": "Backtest Data",
+          "root_selector": "points",
           "source": "url",
           "type": "json",
           "url": "/analytics/forecast-backtest/${Type}/${Symbol}?from=${__from:date:iso}&to=${__to:date:iso}&smoothing_span=12",
@@ -676,7 +598,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.4.1",
+      "pluginVersion": "12.4.3",
       "targets": [
         {
           "columns": [],
@@ -751,7 +673,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.4.1",
+      "pluginVersion": "12.4.3",
       "targets": [
         {
           "columns": [],
@@ -826,7 +748,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.4.1",
+      "pluginVersion": "12.4.3",
       "targets": [
         {
           "columns": [],
@@ -922,7 +844,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.4.1",
+      "pluginVersion": "12.4.3",
       "targets": [
         {
           "columns": [],
@@ -1012,6 +934,6 @@
   "timezone": "browser",
   "title": "Asset Drilldown Detail",
   "uid": "usbh2nn",
-  "version": 24,
+  "version": 1,
   "weekStart": ""
 }
