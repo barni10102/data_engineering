@@ -61,7 +61,7 @@ A parancs hatására minden szolgáltatás elindul, az adatbázis sémák inicia
 
 ### Megjegyzés
 
-A rendszer induláskor automatikusan megpróbál seed adatot betölteni a csomagolt raw.zip fájlból, ezért a dashboardok első indítás után is tartalmazhatnak adatot. A megjelenített adatok időtartománya a seed fájlban lévő időbélyegektől függ, ezért ha egy panel üresnek látszik, érdemes az időszűrőt átállítani (pl. szélesebb vagy egyedi időintervallumra), hogy a meglévő adatok láthatóvá váljanak.
+A rendszer induláskor automatikusan megpróbál seed adatot betölteni a csomagolt raw.zip fájlból (ez eltarthat egy pár percig, a Dockerben a Prefect Scheduler szolgáltatásnál követhető a folyamat), ezért a dashboardok első indítás után is tartalmazhatnak adatot. A megjelenített adatok időtartománya a seed fájlban lévő időbélyegektől függ, ezért ha egy panel üresnek látszik, érdemes az időszűrőt átállítani (pl. szélesebb vagy egyedi időintervallumra), hogy a meglévő adatok láthatóvá váljanak. Az Asset Drilldown Detail dashboardon pedig előfordulhat, hogy a Forecast Backtest (Actual vs EWMA Forecast), MAE (Test), RMSE (Test), MAPE (Test) és Current Regime panelei No data üzenetet mutatnak. Ez nem hiba hanem nincs még elég érték az előrejelzéshez.
 
 ### Figyelmeztetés
 
